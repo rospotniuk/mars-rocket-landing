@@ -37,7 +37,7 @@ SCREEN_HEIGHT = 400
 W = SCREEN_WIDTH / SCALE
 H = SCREEN_HEIGHT / SCALE
 
-WIND_SPEED_RANGE = np.array([10, 100]) / W
+WIND_SPEED_RANGE = np.arange(10, 100) / W / SCALE
 WIND_SPEED_SHIFT = 1 / W
 
 RELIEF_COLOR = np.array([222, 184, 135]) / 255       # burlywood
@@ -98,11 +98,6 @@ class MarsLanderEnvironment(gym.Env):
             # ACTIONS: no fire, fire left engine, main engine, right engine
             self.action_space = spaces.Discrete(4)
 
-        self.wind_speed = random.choice(WIND_SPEED_RANGE)
-        self.wind_direction = random.choice((-1, 1)) # -1 means from right to left; 1 means from left to right
-
-        self.fuel_capacity = FULL_TANK
-
         self._reset()
 
     def _seed(self, seed=None):
@@ -129,12 +124,20 @@ class MarsLanderEnvironment(gym.Env):
         self.world.contactListener = self.world.contactListener_keepref
         self.terminated = False
         self.prev_shaping = None
+# !!!
+        self.wind_speed = random.choice(WIND_SPEED_RANGE)
+        self.wind_direction = random.choice((-1, 1)) # -1 means from right to left; 1 means from left to right
+
+        self.fuel_capacity = FULL_TANK
+
+        self.total_angle = 0
+        self.prev_angle = 0
 
         # Relief
         BENDS = 15
         bends_y = np.random.uniform(0, H/2, size=(BENDS+1,))
         hill_width = W/(BENDS-1)
-        bends_x  = [hill_width*i + np.random.uniform(-0.5*hill_width, 0.5*hill_width) * int(n != 0 and n != BENDS-1) for n,i in enumerate(range(BENDS))]
+        bends_x = [hill_width*i + np.random.uniform(-0.5*hill_width, 0.5*hill_width) * int(n != 0 and n != BENDS-1) for n,i in enumerate(range(BENDS))]
         self.plateau_x1 = bends_x[BENDS//2-1]
         self.plateau_x2 = bends_x[BENDS//2+1]
         self.plateau_center = (self.plateau_x2 + self.plateau_x1) / 2
@@ -242,11 +245,15 @@ class MarsLanderEnvironment(gym.Env):
         assert self.action_space.contains(action), "%r (%s) invalid " % (action,type(action))
 
         # Engines
-        tip  = (np.sin(self.lander.angle), np.cos(self.lander.angle))
-        side = (-tip[1], tip[0]);
+        tip = (np.sin(self.lander.angle), np.cos(self.lander.angle))
+        side = (-tip[1], tip[0])
         dispersion = [np.random.uniform(-1.0, +1.0) / SCALE for _ in range(2)]
 
-        print(1, self.lander.position, self.lander.linearVelocity)
+        #print(1, self.lander.position, self.lander.linearVelocity)
+
+        wind_velocity = self.wind_direction * (self.wind_speed + np.random.uniform(-WIND_SPEED_SHIFT, WIND_SPEED_SHIFT))
+        self.lander.linearVelocity[0] += wind_velocity
+        #print(self.wind_direction, self.wind_speed, " ".join(["{0:+0.4f}".format(i) for i in (wind_velocity, self.lander.linearVelocity[0])]))
 
         m_power = 0.0
         if (self.continuous and action[0] > 0.0) or (not self.continuous and action==2):
@@ -259,10 +266,7 @@ class MarsLanderEnvironment(gym.Env):
 
             self.fuel_capacity -= m_power #
             
-            ox =  tip[0]*(4/SCALE + 2*dispersion[0]) + side[0]*dispersion[1]   # 4 is move a bit downwards, +-2 for randomness
-            print(ox, self.wind_speed)
-            ox += self.wind_direction * (self.wind_speed + np.random.uniform(-WIND_SPEED_SHIFT, WIND_SPEED_SHIFT)) / FPS
-            print(ox)
+            ox = tip[0]*(4/SCALE + 2*dispersion[0]) + side[0]*dispersion[1]   # 4 is move a bit downwards, +-2 for randomness
             oy = -tip[1]*(4/SCALE + 2*dispersion[0]) - side[1]*dispersion[1]
             impulse_pos = (self.lander.position[0] + ox, self.lander.position[1] + oy)
             p = self._create_particle(3.5, impulse_pos[0], impulse_pos[1], m_power)    # fire are just a decoration, 3.5 is here to make particle speed adequate
@@ -282,8 +286,7 @@ class MarsLanderEnvironment(gym.Env):
             
             self.fuel_capacity -= s_power * 0.1 #
 
-            ox =  tip[0]*dispersion[0] + side[0]*(3*dispersion[1]+direction*SIDE_ENGINE_AWAY/SCALE)
-            ox += self.wind_direction * (self.wind_speed + np.random.uniform(-WIND_SPEED_SHIFT, WIND_SPEED_SHIFT)) / FPS
+            ox = tip[0]*dispersion[0] + side[0]*(3*dispersion[1]+direction*SIDE_ENGINE_AWAY/SCALE)
             oy = -tip[1]*dispersion[0] - side[1]*(3*dispersion[1]+direction*SIDE_ENGINE_AWAY/SCALE)
             impulse_pos = (self.lander.position[0] + ox - tip[0]*17/SCALE, self.lander.position[1] + oy + tip[1]*SIDE_ENGINE_HEIGHT/SCALE)
             p = self._create_particle(0.7, impulse_pos[0], impulse_pos[1], s_power)
@@ -292,11 +295,14 @@ class MarsLanderEnvironment(gym.Env):
 
         self.world.Step(1.0/FPS, 6*30, 2*30)
 
-        print(3, self.lander.position, self.lander.linearVelocity)
+        #print(2, self.lander.position, self.lander.linearVelocity)
 
         pos = self.lander.position
         vel = self.lander.linearVelocity
-        
+        if np.sign(self.prev_angle) != np.sign(self.lander.angle):
+            self.total_angle = 0
+        self.total_angle += self.lander.angle
+
         W2 = W / 2
         #print(pos.x, self.plateau_center, W2)
         state = [
@@ -308,8 +314,8 @@ class MarsLanderEnvironment(gym.Env):
             20.0*self.lander.angularVelocity/FPS,
             1.0 if self.legs[0].ground_contact else 0.0,
             1.0 if self.legs[1].ground_contact else 0.0
-            ]
-        assert len(state)==8
+        ]
+        assert len(state) == 8
 
         reward = 0
         shaping = \
@@ -319,6 +325,7 @@ class MarsLanderEnvironment(gym.Env):
                                                               # lose contact again after landing, you get negative reward
         if self.prev_shaping is not None:
             reward = shaping - self.prev_shaping
+        #reward -= 10 * abs(self.total_angle)
         self.prev_shaping = shaping
 
         #reward -= m_power*0.30  # less fuel spent is better, about -30 for heurisic landing
@@ -327,17 +334,18 @@ class MarsLanderEnvironment(gym.Env):
 
         done = False
         if self.terminated or abs(state[0]) >= 1.0:
-            done   = True
-            reward = -100
+            done = True
+            reward = -5000
         if not self.lander.awake:
-            done   = True
-            reward = +100
+            done = True
+            reward = +1000
 
-        if self.fuel_capacity <= 0: 
-            done   = True
-            reward = -200
+        if self.fuel_capacity <= 0:
+            done = True
+            reward = -5000
 
-        return np.array(state), reward, done, {}
+        return np.array(state), reward, done, \
+               {'x': pos.x, 'y': pos.y, 'velX': vel.x*W2/FPS, 'velY': vel.y*W2/FPS, 'angle': self.lander.angle}
 
 
     def _render(self, mode='human', close=False):
@@ -438,7 +446,8 @@ if __name__=="__main__":
     total_reward = 0
     steps = 0
     while True:
-        a = heuristic(env, s)
+        #a = heuristic(env, s)
+        a = random.choice([0])
         s, r, done, info = env.step(a)
         env.render()
         total_reward += r
