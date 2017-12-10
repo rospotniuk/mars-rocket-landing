@@ -67,19 +67,24 @@ class DQNAgent(object):
             return loss
         # Sample a list of `batch_size` random indices from the memory without replacement
         sample_batch = random.sample(self.memory, batch_size)
-        for state, action, reward, next_state, done in sample_batch:
+        states = np.zeros((batch_size, self.state_size))
+        targets = np.zeros((batch_size, self.action_size))
+        for idx, (state, action, reward, next_state, done) in enumerate(sample_batch):
             # We can improve only the target for the action in the observation <S, A, R, S'>
             target_for_action = reward   # It is correct if the state is final
             if not done:
                 # If the state is not final, we add to it the discounted future rewards per current policy
                 target_for_action += self.gamma * np.amax(self.model.predict(next_state)[0])
-            target = self.model.predict(state)
-            target[0][action] = target_for_action
-            # Do one learning step (epoch=1) with the given (X, y) = (state, target)
-            history = self.model.fit(state, target, epochs=1, verbose=0)
-            loss += history.history['loss'][-1]
+            targets[idx, :] = self.model.predict(state)[0]
+            targets[idx, action] = target_for_action
+            states[idx, :] = state[0]
+        print(targets)
+        print(states)
+        # Do one learning step (epoch=1) with the given (X, y) = (state, target)
+        history = self.model.fit(states, targets, epochs=1, verbose=0)
+        loss += history.history['loss'][-1]
         # Each epoch (a training step) we will reduce the exploration rate until it is less than some value
         if self.exploration_rate > self.exploration_rate_min:
             self.exploration_rate *= self.exploration_decay
-        # Return the average loss of this training step
-        return loss / batch_size
+        # Return the loss of this training step
+        return loss

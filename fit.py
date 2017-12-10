@@ -40,7 +40,7 @@ def run(episods_nb=10000, render=False, save_episodes=False):
                 state = new_state
 
                 total_reward += reward
-                if done or step % 10 == 0:
+                if done or (step % 10 == 0 and not episode % 10):
                     print(["{:+0.2f}".format(x) for x in state.flatten()])
                     print("Step {}: total reward = {:+0.2f}".format(step, total_reward))
                 # Save lander coordinates (x, y, velX, velY and angle)
@@ -68,7 +68,7 @@ def save_stats(y, title=""):
     x = np.arange(1, len(y) + 1)
     plt.figure(figsize=(18, 6))
     plt.plot(x, y)
-    plt.xlabel(title, fontsize=18)
+    plt.xlabel(title, fontsize=16)
     plt.ylabel('Epoch', fontsize=16)
     plt.grid(b=True, which='major', color='k', linestyle='--')
     plt.savefig(os.path.join("imgs", title + ".jpg"))
@@ -76,4 +76,4 @@ def save_stats(y, title=""):
 
 
 if __name__ == '__main__':
-    run(episods_nb=200, save_episodes=True)
+    run(episods_nb=500, save_episodes=True)

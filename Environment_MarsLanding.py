@@ -250,17 +250,17 @@ class MarsLanderEnvironment(gym.Env):
         dispersion = [np.random.uniform(-1.0, +1.0) / SCALE for _ in range(2)]
 
         #print(1, self.lander.position, self.lander.linearVelocity)
-
+        """
         wind_velocity = self.wind_direction * (self.wind_speed + np.random.uniform(-WIND_SPEED_SHIFT, WIND_SPEED_SHIFT))
         self.lander.linearVelocity[0] += wind_velocity
-        #print(self.wind_direction, self.wind_speed, " ".join(["{0:+0.4f}".format(i) for i in (wind_velocity, self.lander.linearVelocity[0])]))
-
+        print(self.wind_direction, " ".join(["{0:+0.4f}".format(i) for i in (self.wind_speed, wind_velocity, self.lander.linearVelocity[0])]))
+        """
         m_power = 0.0
-        if (self.continuous and action[0] > 0.0) or (not self.continuous and action==2):
+        if (self.continuous and action[0] > 0.0) or (not self.continuous and action == 2):
             # Main engine
             if self.continuous:
                 m_power = (np.clip(action[0], 0.0,1.0) + 1.0)*0.5   # 0.5..1.0
-                assert m_power>=0.5 and m_power <= 1.0
+                assert m_power >= 0.5 and m_power <= 1.0
             else:
                 m_power = 1.0
 
@@ -274,7 +274,7 @@ class MarsLanderEnvironment(gym.Env):
             self.lander.ApplyLinearImpulse((-ox*MAIN_ENGINE_POWER*m_power, -oy*MAIN_ENGINE_POWER*m_power), impulse_pos, True)
 
         s_power = 0.0
-        if (self.continuous and np.abs(action[1]) > 0.5) or (not self.continuous and action in [1,3]):
+        if (self.continuous and np.abs(action[1]) > 0.5) or (not self.continuous and action in [1, 3]):
             # Orientation engines
             if self.continuous:
                 direction = np.sign(action[1])
@@ -319,7 +319,7 @@ class MarsLanderEnvironment(gym.Env):
 
         reward = 0
         shaping = \
-            - 100*np.sqrt(state[0]*state[0] + state[1]*state[1]) \
+            - 300*np.sqrt(state[0]*state[0] + state[1]*state[1]) \
             - 100*np.sqrt(state[2]*state[2] + state[3]*state[3]) \
             - 100*abs(state[4]) + 10*state[6] + 10*state[7]   # And ten points for legs contact, the idea is if you
                                                               # lose contact again after landing, you get negative reward
@@ -333,7 +333,7 @@ class MarsLanderEnvironment(gym.Env):
         reward -= m_power + 0.1*s_power
 
         done = False
-        if self.terminated or abs(state[0]) >= 1.0:
+        if self.terminated or abs(state[0]) >= 1.5:
             done = True
             reward = -5000
         if not self.lander.awake:
@@ -342,7 +342,7 @@ class MarsLanderEnvironment(gym.Env):
 
         if self.fuel_capacity <= 0:
             done = True
-            reward = -5000
+            reward = -2000
 
         return np.array(state), reward, done, \
                {'x': pos.x, 'y': pos.y, 'velX': vel.x*W2/FPS, 'velY': vel.y*W2/FPS, 'angle': self.lander.angle}
