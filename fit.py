@@ -7,40 +7,43 @@ from Environment_MarsLanding import MarsLanderEnvironment
 from Agent import DQNAgent
 
 
-def run(episods_nb=10000, render=False, save_episodes=False):
-    env = MarsLanderEnvironment()
-    state_size = env.observation_space.shape[0]
-    action_size = env.action_space.n
-    agent = DQNAgent(action_size, state_size)
+def run(episods_nb=1000, render=False, save_each_n_episodes=10):
+    env = MarsLanderEnvironment()   # Asign an environment
+    state_size = env.observation_space.shape[0]    # Get states amount from the environment
+    action_size = env.action_space.n    # And actions amount from the environment
+    agent = DQNAgent(action_size, state_size)    # Determine an agent
     batch_size = 32
+    # Data to visualize the learning process
     steps = []
     rewards = []
     losses = []
     coords = {}
     try:
-        for episode in range(1, episods_nb+1):
-            frames = []
+        for episode in range(1, episods_nb+1):   # Iterate episodes
+            frames = []   # Remember environment states to save a gif for episodes
             print("\nEpisode: {}".format(episode))
             state = env.reset()
             state = np.reshape(state, [1, state_size])
             done = False
             step = 0
             total_reward = 0
-            while not done:
+            while not done:    # Do some actions until an condition of episode termination is achieved
                 step += 1
                 action = agent.act(state)
                 new_state, reward, done, info = env.step(action)
                 new_state = np.reshape(new_state, [1, state_size])
                 if render:
                     env.render()
-                if save_episodes and not episode % 100:
+                if not episode % save_each_n_episodes:
                     frames.append(env.render(mode='rgb_array'))
 
+                # Add experience to memory
                 agent.remember(state, action, reward, new_state, done)
+
                 state = new_state
 
                 total_reward += reward
-                if done or (step % 10 == 0 and not episode % 10):
+                if done or step % 1 == 0:
                     print(["{:+0.2f}".format(x) for x in state.flatten()])
                     print("Step {}: total reward = {:+0.2f}".format(step, total_reward))
                 # Save lander coordinates (x, y, velX, velY and angle)
@@ -76,4 +79,4 @@ def save_stats(y, title=""):
 
 
 if __name__ == '__main__':
-    run(episods_nb=500, save_episodes=True)
+    run(episods_nb=100, save_each_n_episodes=1)

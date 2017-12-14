@@ -1,9 +1,11 @@
-import sys
 import numpy as np
 import random
 
+import pygame
+from pygame.locals import *
+
 import Box2D
-from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
+from Box2D.b2 import edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener
 
 import gym
 from gym import spaces
@@ -13,16 +15,16 @@ from gym.envs.classic_control import rendering
 FPS = 60
 SCALE = 30.0   # affects how fast-paced the game is, forces should be adjusted as well
 
-MAIN_ENGINE_POWER  = 13.0
-SIDE_ENGINE_POWER  =  0.6
-FULL_TANK = 250   # full tank of fuel
+MAIN_ENGINE_POWER = 13.0
+SIDE_ENGINE_POWER = 0.6
+FULL_TANK = 500   # full tank of fuel
 
 INITIAL_RANDOM_FORCE = 1000.0   # Set 1500 to make game harder
 
 LANDER_POLY =[
-    (-14,+17), (-17,0), (-17,-10),
-    (+17,-10), (+17,0), (+14,+17)
-    ]
+    (-14, +17), (-17, 0), (-17, -10),
+    (+17, -10), (+17, 0), (+14, +17)
+]
 
 LEG_AWAY = 20
 LEG_DOWN = 18
@@ -30,7 +32,7 @@ LEG_W, LEG_H = 2, 8
 LEG_SPRING_TORQUE = 40
 
 SIDE_ENGINE_HEIGHT = 14.0
-SIDE_ENGINE_AWAY   = 12.0
+SIDE_ENGINE_AWAY = 12.0
 
 SCREEN_WIDTH = 600
 SCREEN_HEIGHT = 400
@@ -70,7 +72,7 @@ class ContactDetector(contactListener):
 class MarsLanderEnvironment(gym.Env):
     metadata = {
         'render.modes': ['human', 'rgb_array'],
-        'video.frames_per_second' : FPS
+        'video.frames_per_second': FPS
     }
 
     continuous = False
@@ -79,12 +81,12 @@ class MarsLanderEnvironment(gym.Env):
         self._seed()
         self.viewer = None
 
-        self.world = Box2D.b2World() #
-        self.mars = None #
-        self.lander = None #
-        self.fire = [] # particles representing fire
+        self.world = Box2D.b2World()   #
+        self.mars = None    #
+        self.lander = None   #
+        self.fire = []    # Particles representing fire
 
-        self.prev_reward = None # 
+        self.prev_reward = None    #
 
         high = np.array([np.inf]*8)  # useful range is -1 .. +1, but spikes can be higher
         self.observation_space = spaces.Box(-high, high) # 
@@ -250,11 +252,11 @@ class MarsLanderEnvironment(gym.Env):
         dispersion = [np.random.uniform(-1.0, +1.0) / SCALE for _ in range(2)]
 
         #print(1, self.lander.position, self.lander.linearVelocity)
-        """
+
         wind_velocity = self.wind_direction * (self.wind_speed + np.random.uniform(-WIND_SPEED_SHIFT, WIND_SPEED_SHIFT))
         self.lander.linearVelocity[0] += wind_velocity
         print(self.wind_direction, " ".join(["{0:+0.4f}".format(i) for i in (self.wind_speed, wind_velocity, self.lander.linearVelocity[0])]))
-        """
+
         m_power = 0.0
         if (self.continuous and action[0] > 0.0) or (not self.continuous and action == 2):
             # Main engine
@@ -319,7 +321,7 @@ class MarsLanderEnvironment(gym.Env):
 
         reward = 0
         shaping = \
-            - 300*np.sqrt(state[0]*state[0] + state[1]*state[1]) \
+            - 100*np.sqrt(state[0]*state[0] + state[1]*state[1]) \
             - 100*np.sqrt(state[2]*state[2] + state[3]*state[3]) \
             - 100*abs(state[4]) + 10*state[6] + 10*state[7]   # And ten points for legs contact, the idea is if you
                                                               # lose contact again after landing, you get negative reward
@@ -335,14 +337,16 @@ class MarsLanderEnvironment(gym.Env):
         done = False
         if self.terminated or abs(state[0]) >= 1.5:
             done = True
-            reward = -5000
+            reward = -100
         if not self.lander.awake:
             done = True
-            reward = +1000
-
+            reward = +100
         if self.fuel_capacity <= 0:
             done = True
-            reward = -2000
+            reward = -100
+
+        self.message += "| Wind: " + str(round(abs(wind_velocity) * W * SCALE, 1)) + \
+                        " | Fuel: " + str(np.round((self.fuel_capacity), 1))
 
         return np.array(state), reward, done, \
                {'x': pos.x, 'y': pos.y, 'velX': vel.x*W2/FPS, 'velY': vel.y*W2/FPS, 'angle': self.lander.angle}
@@ -405,48 +409,13 @@ class MarsLanderEnvironment(gym.Env):
 
         return self.viewer.render(return_rgb_array = mode=='rgb_array')
 
-class LunarLanderContinuous(MarsLanderEnvironment):
-    continuous = False
-
-def heuristic(env, s):
-    # Heuristic for:
-    # 1. Testing. 
-    # 2. Demonstration rollout.
-    angle_targ = s[0]*0.5 + s[2]*1.0         # angle should point towards center (s[0] is horizontal coordinate, s[2] hor speed)
-    if angle_targ >  0.4: angle_targ =  0.4  # more than 0.4 radians (22 degrees) is bad
-    if angle_targ < -0.4: angle_targ = -0.4
-    hover_targ = 0.55*np.abs(s[0])           # target y should be proporional to horizontal offset
-
-    # PID controller: s[4] angle, s[5] angularSpeed
-    angle_todo = (angle_targ - s[4])*0.5 - (s[5])*1.0
-    #print("angle_targ=%0.2f, angle_todo=%0.2f" % (angle_targ, angle_todo))
-
-    # PID controller: s[1] vertical coordinate s[3] vertical speed
-    hover_todo = (hover_targ - s[1])*0.5 - (s[3])*0.5
-    #print("hover_targ=%0.2f, hover_todo=%0.2f" % (hover_targ, hover_todo))
-
-    if s[6] or s[7]: # legs have contact
-        angle_todo = 0
-        hover_todo = -(s[3])*0.5  # override to reduce fall speed, that's all we need after contact
-
-    if env.continuous:
-        a = np.array( [hover_todo*20 - 1, -angle_todo*20] )
-        a = np.clip(a, -1, +1)
-    else:
-        a = 0
-        if hover_todo > np.abs(angle_todo) and hover_todo > 0.05: a = 2
-        elif angle_todo < -0.05: a = 3
-        elif angle_todo > +0.05: a = 1
-    return a
 
 if __name__=="__main__":
-    #env = LunarLander()
-    env = LunarLanderContinuous()
+    env = MarsLanderEnvironment()
     s = env.reset()
     total_reward = 0
     steps = 0
     while True:
-        #a = heuristic(env, s)
         a = random.choice([0])
         s, r, done, info = env.step(a)
         env.render()
@@ -455,4 +424,5 @@ if __name__=="__main__":
             print(["{:+0.2f}".format(x) for x in s])
             print("step {} total_reward {:+0.2f}".format(steps, total_reward))
         steps += 1
-        if done: break
+        if done:
+            break

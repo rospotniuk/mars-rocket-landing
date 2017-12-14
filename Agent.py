@@ -1,7 +1,6 @@
 import os
 import random
 import numpy as np
-from collections import deque
 
 from keras.models import Sequential
 from keras.layers import Dense
@@ -12,16 +11,59 @@ from keras import backend as K
 # Create a Keras Huber loss function
 def hubert_loss(y_true, y_pred):
     err = y_pred - y_true
-    return K.mean(K.sqrt(1+K.square(err))-1, axis=-1)
+    return K.mean(K.sqrt(1 + K.square(err)) - 1, axis=-1)
+
+
+class Memory:
+    def __init__(self):
+        self.clear()
+
+    @classmethod
+    def push(cls, x, y):
+        try:
+            return np.concatenate((x, y), axis=0)
+        except:
+            return np.concatenate((x, np.array([y])), axis=0)
+
+    @classmethod
+    def shift(cls, x):
+        try:
+            return np.delete(x, 0, axis=0)
+        except:
+            return x
+
+    def remember(self, S, A, R, S_, D):
+        self.states = Memory.push(self.states, S)
+        self.actions = Memory.push(self.actions, A)
+        self.rewards = Memory.push(self.rewards, R)
+        self.new_states = Memory.push(self.new_states, S_)
+        self.dones = Memory.push(self.dones, D)
+
+    def forget(self):
+        self.states = Memory.shift(self.states)
+        self.actions = Memory.shift(self.actions)
+        self.rewards = Memory.shift(self.rewards)
+        self.new_states = Memory.shift(self.new_states)
+        self.dones = Memory.shift(self.dones)
+
+    def clear(self):
+        self.states = np.array([], dtype=np.float).reshape(0, 8)
+        self.actions = np.array([], dtype=np.int)
+        self.rewards = np.array([], dtype=np.float)
+        self.new_states = np.array([], dtype=np.float).reshape(0, 8)
+        self.dones = np.array([], dtype=np.int)
+
 
 
 class DQNAgent(object):
     def __init__(self,
-                 action_size, state_size,
-                 layers=[50, 40],
-                 learning_rate=0.001, gamma=0.95,
+                 action_size=4, state_size=8,
+                 layers=(512, 256),
+                 learning_rate=0.001, gamma=0.975,
                  exploration_rate=1.0, exploration_rate_min=0.01, exploration_decay=0.995,
-                 model_weights_path="mars_landing_weigths.h5"
+                 max_memory_len=75000,
+                 model_weights_path="mars_landing_weigths.h5",
+                 load_previous_weights=True
                  ):
         self.state_size = state_size
         self.action_size = action_size
@@ -32,8 +74,10 @@ class DQNAgent(object):
         self.exploration_rate_min = exploration_rate_min
         self.exploration_decay = exploration_decay
         self.model_weights_path = model_weights_path
+        self.load_previous_weights = load_previous_weights
         self.model = self._build_model()
-        self.memory = deque(maxlen=2500)
+        self.max_memory_len = max_memory_len
+        self.memory = Memory()
 
     def _build_model(self):
         model = Sequential()
@@ -43,19 +87,28 @@ class DQNAgent(object):
         model.add(Dense(self.action_size, activation="linear"))
         model.compile(loss=hubert_loss, optimizer=Adam(lr=self.learning_rate))
 
-        if os.path.isfile(self.model_weights_path):
-            model.load_weights(self.model_weights_path)
-            self.exploration_rate = self.exploration_rate_min
+        if self.load_previous_weights:
+            if os.path.isfile(self.model_weights_path):
+                model.load_weights(self.model_weights_path)
+                self.exploration_rate = self.exploration_rate_min
+            else:
+                print("File '{}' does not exist. Retraining...".format(self.model_weights_path))
         return model
 
     def save_model(self):
         self.model.save(self.model_weights_path)
 
     def remember(self, state, action, reward, new_state, done):
-        self.memory.append((state, action, reward, new_state, done))
+        # If memory is full, then remove the first element
+        self._forget()
+        self.memory.remember(state, action, reward, new_state, done)
+
+    def _forget(self):
+        if np.alen(self.memory.states) >= self.max_memory_len:
+            self.memory.forget()
 
     def act(self, state):
-        if (np.random.uniform(0, 1) <= self.exploration_rate):
+        if np.random.uniform(0, 1) <= self.exploration_rate:
             return np.random.randint(0, self.action_size)
         action = self.model.predict(state)
         return np.argmax(action)
@@ -63,25 +116,17 @@ class DQNAgent(object):
     def partial_fit(self, batch_size=32):
         # Do not learn if number of observations in buffer is low
         loss = 0.0
-        if len(self.memory) < batch_size:
+        n = self.memory.states.shape[0]
+        if n < batch_size:
             return loss
-        # Sample a list of `batch_size` random indices from the memory without replacement
-        sample_batch = random.sample(self.memory, batch_size)
-        states = np.zeros((batch_size, self.state_size))
-        targets = np.zeros((batch_size, self.action_size))
-        for idx, (state, action, reward, next_state, done) in enumerate(sample_batch):
-            # We can improve only the target for the action in the observation <S, A, R, S'>
-            target_for_action = reward   # It is correct if the state is final
-            if not done:
-                # If the state is not final, we add to it the discounted future rewards per current policy
-                target_for_action += self.gamma * np.amax(self.model.predict(next_state)[0])
-            targets[idx, :] = self.model.predict(state)[0]
-            targets[idx, action] = target_for_action
-            states[idx, :] = state[0]
-        print(targets)
-        print(states)
-        # Do one learning step (epoch=1) with the given (X, y) = (state, target)
-        history = self.model.fit(states, targets, epochs=1, verbose=0)
+        # We can improve only the target for the action in the observation <S, A, R, S'>
+        # If the state is not final, we add to it the discounted future rewards per current policy
+        targets_for_action = self.memory.rewards + \
+                    (1 - self.memory.dones) * self.gamma * np.amax(self.model.predict(self.memory.new_states), axis=1)
+        targets = self.model.predict(self.memory.states)
+        targets[np.arange(0, n), self.memory.actions] = targets_for_action
+        # Do one learning step (epoch=1) with the given (X, y) = (states, targets)
+        history = self.model.fit(self.memory.states, targets, epochs=1, verbose=0)
         loss += history.history['loss'][-1]
         # Each epoch (a training step) we will reduce the exploration rate until it is less than some value
         if self.exploration_rate > self.exploration_rate_min:
